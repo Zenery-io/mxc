@@ -106,7 +106,7 @@
 //! |-------------|---------------------|---------------------------------------|------------------------------------------|
 //! | **capture** | [`run`]             | `exec_sandbox(…)?.wait_with_output()` | captured                                 |
 //! | **handle**  | [`spawn_sandbox`]   | [`exec_sandbox`]                      | live pipes (stream, kill); no TTY        |
-//! | **attach**  | *not available*     | [`exec_attached`]                     | this process's stdio; TTY if it has one  |
+//! | **inherit** | [`spawn_sandbox_with_stdio`] | [`exec_attached`]              | this process's stdio                      |
 //!
 //! [`run_state_aware_json`] sits alongside these and drives the *other*
 //! state-aware phases — `provision`, `start`, `stop`, `deprovision`, and a dry
@@ -118,11 +118,11 @@
 //!
 //! ## Pty allocation
 //!
-//! Every entry point except [`exec_attached`] wires the child's stdio to
-//! ordinary pipes and allocates no pty. [`run`] captures both streams; with
-//! [`spawn_sandbox`] or [`exec_sandbox`], stream the handle's
-//! `take_stdout`/`take_stderr`, or let [`wait`](Sandbox::wait) drain and
-//! discard any untaken stream.
+//! [`run`], [`spawn_sandbox`], and [`exec_sandbox`] use ordinary pipes.
+//! [`spawn_sandbox_with_stdio`] can instead inherit this process's streams.
+//! None of those entry points allocates a pty. With a piped handle, stream its
+//! `take_stdout`/`take_stderr`, or let [`wait`](Sandbox::wait) drain and discard
+//! any untaken stream.
 //!
 //! Under [`exec_attached`], IsolationSession allocates a pseudo-console and
 //! forwards stdin, so interactive shells render and resize. A pseudo-console
@@ -147,7 +147,7 @@ pub use mxc_engine::{
     available_backends, available_tools_policy, build_request, build_request_with_containment,
     platform_support, temporary_files_policy, user_profile_policy, AvailableBackend,
     BackendCapability, Containment, Error, ErrorCode, FilesystemPolicyResult, PlatformSupport,
-    SandboxPolicy, SandboxRequest, WslcSection,
+    SandboxPolicy, SandboxRequest, SandboxStdio, WslcSection,
 };
 
 pub use sandbox::{
@@ -162,7 +162,20 @@ pub use sandbox::{
 /// no pty is allocated. Any stdout/stderr stream the caller does not `take_*` is
 /// drained and discarded by [`wait`](Sandbox::wait).
 pub fn spawn_sandbox(request: SandboxRequest) -> Result<Sandbox, Error> {
-    mxc_engine::spawn(&request).map(Sandbox::new)
+    spawn_sandbox_with_stdio(request, SandboxStdio::Piped)
+}
+
+/// Spawn a live sandbox with explicit standard-stream behavior.
+///
+/// [`SandboxStdio::Piped`] exposes ordinary pipes through the returned handle.
+/// [`SandboxStdio::Inherit`] connects the sandboxed process directly to this
+/// process's streams; `take_stdin`, `take_stdout`, and `take_stderr` then return
+/// `None`. Neither mode allocates a pty.
+pub fn spawn_sandbox_with_stdio(
+    request: SandboxRequest,
+    stdio: SandboxStdio,
+) -> Result<Sandbox, Error> {
+    mxc_engine::spawn_with_stdio(&request, stdio).map(Sandbox::new)
 }
 
 /// Run a sandbox from a [`SandboxRequest`] **to completion**, capturing its

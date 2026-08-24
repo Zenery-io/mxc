@@ -24,7 +24,7 @@
 use wxc_common::logger::Logger;
 use wxc_common::models::{ContainmentBackend, ExecutionRequest, ScriptResponse};
 use wxc_common::mxc_error::MxcError;
-use wxc_common::sandbox_process::SandboxProcess;
+use wxc_common::sandbox_process::{SandboxProcess, StdioMode};
 
 /// `Err` when the host OS has no MXC sandbox backend. Checked before backend
 /// selection so an unsupported platform reports a clear message rather than a
@@ -56,6 +56,7 @@ fn ensure_host_supported() -> Result<(), MxcError> {
 pub fn spawn_runner(
     request: &ExecutionRequest,
     logger: &mut Logger,
+    stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
     ensure_host_supported()?;
     // `dry_run` means "validate, don't execute" — there is no process to
@@ -66,10 +67,10 @@ pub fn spawn_runner(
         ));
     }
     match &request.containment {
-        ContainmentBackend::Seatbelt => spawn_seatbelt(request, logger),
-        ContainmentBackend::Bubblewrap => spawn_bubblewrap(request, logger),
-        ContainmentBackend::ProcessContainer => spawn_process_container(request, logger),
-        ContainmentBackend::Wslc => spawn_wslc(request, logger),
+        ContainmentBackend::Seatbelt => spawn_seatbelt(request, logger, stdio),
+        ContainmentBackend::Bubblewrap => spawn_bubblewrap(request, logger, stdio),
+        ContainmentBackend::ProcessContainer => spawn_process_container(request, logger, stdio),
+        ContainmentBackend::Wslc => spawn_wslc(request, logger, stdio),
         other => Err(MxcError::unsupported_containment(format!(
             "the mxc engine does not yet support streaming for the '{}' backend",
             other.wire_name()
@@ -102,11 +103,12 @@ fn map_spawn_error(resp: ScriptResponse) -> MxcError {
 fn spawn_bubblewrap(
     request: &ExecutionRequest,
     logger: &mut Logger,
+    stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
-    use wxc_common::sandbox_process::{SandboxBackend, StdioMode};
+    use wxc_common::sandbox_process::SandboxBackend;
     let mut runner = bwrap_common::bwrap_runner::BubblewrapScriptRunner::new();
     runner
-        .spawn(request, logger, StdioMode::Pipes)
+        .spawn(request, logger, stdio)
         .map_err(map_spawn_error)
 }
 
@@ -114,6 +116,7 @@ fn spawn_bubblewrap(
 fn spawn_bubblewrap(
     _request: &ExecutionRequest,
     _logger: &mut Logger,
+    _stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
     Err(MxcError::unsupported_containment(
         "Bubblewrap is only available on Linux",
@@ -124,11 +127,12 @@ fn spawn_bubblewrap(
 fn spawn_seatbelt(
     request: &ExecutionRequest,
     logger: &mut Logger,
+    stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
-    use wxc_common::sandbox_process::{SandboxBackend, StdioMode};
+    use wxc_common::sandbox_process::SandboxBackend;
     let mut runner = seatbelt_common::seatbelt_runner::SeatbeltScriptRunner::new();
     runner
-        .spawn(request, logger, StdioMode::Pipes)
+        .spawn(request, logger, stdio)
         .map_err(map_spawn_error)
 }
 
@@ -136,6 +140,7 @@ fn spawn_seatbelt(
 fn spawn_seatbelt(
     _request: &ExecutionRequest,
     _logger: &mut Logger,
+    _stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
     Err(MxcError::unsupported_containment(
         "Seatbelt is only available on macOS",
@@ -146,12 +151,12 @@ fn spawn_seatbelt(
 fn spawn_process_container(
     request: &ExecutionRequest,
     logger: &mut Logger,
+    stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
     use appcontainer_common::dispatcher::{
         spawn_with_fallback_and_capture, DispatchError, SpawnDispatchError,
     };
     use std::fmt::Write;
-    use wxc_common::sandbox_process::StdioMode;
 
     // ProcessContainer resolves to a concrete backend + isolation tier purely
     // by host capability, via the shared `spawn_with_fallback_and_capture`
@@ -167,7 +172,7 @@ fn spawn_process_container(
     // AppContainer fallback tier can still honor it instead of failing
     // closed.
     let capture_factory = crate::guarded_capture::factory_for_request(request);
-    match spawn_with_fallback_and_capture(request, logger, StdioMode::Pipes, capture_factory) {
+    match spawn_with_fallback_and_capture(request, logger, stdio, capture_factory) {
         Ok(dispatched) => {
             for w in &dispatched.warnings {
                 let _ = writeln!(logger, "warning: {w}");
@@ -213,6 +218,7 @@ fn spawn_process_container(
 fn spawn_process_container(
     _request: &ExecutionRequest,
     _logger: &mut Logger,
+    _stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
     Err(MxcError::unsupported_containment(
         "ProcessContainer (AppContainer / BaseContainer) is only available on Windows",
@@ -226,8 +232,9 @@ fn spawn_process_container(
 fn spawn_wslc(
     request: &ExecutionRequest,
     logger: &mut Logger,
+    stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
-    use wxc_common::sandbox_process::{SandboxBackend, StdioMode};
+    use wxc_common::sandbox_process::SandboxBackend;
 
     if !request.experimental_enabled {
         return Err(MxcError::malformed_request(
@@ -238,7 +245,7 @@ fn spawn_wslc(
     let config = request.experimental.wslc.clone().unwrap_or_default();
     let mut runner = wslc_common::WSLContainerRunner::new(&config);
     runner
-        .spawn(request, logger, StdioMode::Pipes)
+        .spawn(request, logger, stdio)
         .map_err(map_spawn_error)
 }
 
@@ -246,6 +253,7 @@ fn spawn_wslc(
 fn spawn_wslc(
     _request: &ExecutionRequest,
     _logger: &mut Logger,
+    _stdio: StdioMode,
 ) -> Result<Box<dyn SandboxProcess>, MxcError> {
     #[cfg(target_os = "windows")]
     {
@@ -268,6 +276,7 @@ mod tests {
     use wxc_common::logger::{Logger, Mode};
     use wxc_common::models::ContainmentBackend;
     use wxc_common::mxc_error::MxcErrorCode;
+    use wxc_common::sandbox_process::StdioMode;
 
     fn minimal_policy() -> SandboxPolicy {
         SandboxPolicy {
@@ -288,7 +297,7 @@ mod tests {
         let mut request = build_request(&minimal_policy(), None).expect("build_request");
         request.inner.dry_run = true;
         let mut logger = Logger::new(Mode::Buffer);
-        let err = match spawn_runner(&request.inner, &mut logger) {
+        let err = match spawn_runner(&request.inner, &mut logger, StdioMode::Pipes) {
             Ok(_) => panic!("dry_run must be rejected"),
             Err(e) => e,
         };
@@ -304,7 +313,7 @@ mod tests {
         let mut request = build_request(&minimal_policy(), None).expect("build_request");
         request.inner.containment = ContainmentBackend::Lxc;
         let mut logger = Logger::new(Mode::Buffer);
-        let err = match spawn_runner(&request.inner, &mut logger) {
+        let err = match spawn_runner(&request.inner, &mut logger, StdioMode::Pipes) {
             Ok(_) => panic!("LXC must be rejected"),
             Err(e) => e,
         };
@@ -348,7 +357,7 @@ mod tests {
             .expect("seatbelt config on macOS")
             .gui_access = true;
         let mut logger = Logger::new(Mode::Buffer);
-        let err = match spawn_runner(&request.inner, &mut logger) {
+        let err = match spawn_runner(&request.inner, &mut logger, StdioMode::Pipes) {
             Ok(_) => panic!("guiAccess must be rejected"),
             Err(e) => e,
         };
@@ -364,7 +373,7 @@ mod tests {
         request.inner.containment = ContainmentBackend::Wslc;
         request.set_experimental(true);
         let mut logger = Logger::new(Mode::Buffer);
-        let err = match spawn_runner(&request.inner, &mut logger) {
+        let err = match spawn_runner(&request.inner, &mut logger, StdioMode::Pipes) {
             Ok(_) => panic!("WSLC must be rejected off Windows"),
             Err(e) => e,
         };
@@ -380,7 +389,7 @@ mod tests {
         let mut request = build_request(&minimal_policy(), None).expect("build_request");
         request.inner.containment = ContainmentBackend::Wslc;
         let mut logger = Logger::new(Mode::Buffer);
-        let err = match spawn_runner(&request.inner, &mut logger) {
+        let err = match spawn_runner(&request.inner, &mut logger, StdioMode::Pipes) {
             Ok(_) => panic!("WSLC must be rejected without experimental features"),
             Err(e) => e,
         };

@@ -6,8 +6,8 @@ An importable Rust library for starting [MXC](../../../README.md) sandboxes
 Build a `SandboxRequest` from a [`SandboxPolicy`], then either **run it to
 completion** with [`run`] (capturing stdout/stderr in one call) or hand it to
 [`spawn_sandbox`] for a live handle you can stream, feed stdin, and kill.
-Either way it selects the right containment backend for the host and runs the
-sandboxed process over ordinary pipes, with no pty. The state-aware
+[`spawn_sandbox_with_stdio`] additionally allows a live process to inherit the
+caller's standard streams. Neither live mode allocates a pty. The state-aware
 [`exec_attached`] path is the one exception — see *Pty allocation*.
 
 ## Usage
@@ -406,9 +406,10 @@ process id (`Sandbox::id()` is `0`) — `kill()` stops the whole container.
 
 ## Pty allocation
 
-Every entry point except `exec_attached` wires the child's stdio to ordinary
-pipes and allocates no pty; output the caller does not take is drained and
-discarded by `wait()`.
+`run`, `spawn_sandbox`, and `exec_sandbox` use ordinary pipes.
+`spawn_sandbox_with_stdio` can instead inherit this process's streams. None of
+those entry points allocates a pty; piped output the caller does not take is
+drained and discarded by `wait()`.
 
 Under `exec_attached`, IsolationSession allocates a pseudo-console and forwards
 stdin, so interactive shells render and resize. A pseudo-console has one output

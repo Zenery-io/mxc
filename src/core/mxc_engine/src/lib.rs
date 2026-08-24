@@ -59,7 +59,25 @@ pub use state_aware::{
 };
 
 use wxc_common::logger::{Logger, Mode};
-use wxc_common::sandbox_process::{SandboxProcess, StreamCloser};
+use wxc_common::sandbox_process::{SandboxProcess, StdioMode, StreamCloser};
+
+/// How a live sandbox inherits or exposes the caller's standard streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxStdio {
+    /// Create ordinary pipes exposed through the sandbox handle.
+    Piped,
+    /// Inherit the current process's stdin, stdout, and stderr.
+    Inherit,
+}
+
+impl SandboxStdio {
+    fn backend_mode(self) -> StdioMode {
+        match self {
+            Self::Piped => StdioMode::Pipes,
+            Self::Inherit => StdioMode::Inherit,
+        }
+    }
+}
 
 /// Spawn a streaming [`SandboxProcess`] handle for a [`SandboxRequest`] built
 /// by [`build_request`] (with the command, and any working directory / env,
@@ -70,8 +88,21 @@ use wxc_common::sandbox_process::{SandboxProcess, StreamCloser};
 /// without a streaming implementation return an [`Error`] with
 /// [`ErrorCode::UnsupportedContainment`].
 pub fn spawn(request: &SandboxRequest) -> Result<Box<dyn SandboxProcess>, Error> {
+    spawn_with_stdio(request, SandboxStdio::Piped)
+}
+
+/// Spawn a live sandbox with explicit standard-stream behavior.
+///
+/// Piped mode exposes ordinary streams through the returned handle. Inherited
+/// mode connects the child directly to this process and the handle's stream
+/// accessors return `None`. Neither mode allocates a pty.
+pub fn spawn_with_stdio(
+    request: &SandboxRequest,
+    stdio: SandboxStdio,
+) -> Result<Box<dyn SandboxProcess>, Error> {
     let mut logger = Logger::new(Mode::Buffer);
-    let process = dispatch::spawn_runner(&request.inner, &mut logger).map_err(Error::from)?;
+    let process = dispatch::spawn_runner(&request.inner, &mut logger, stdio.backend_mode())
+        .map_err(Error::from)?;
     let mut warnings = process.warnings().to_vec();
     for warning in logger.take_warnings() {
         if !warnings.contains(&warning) {
@@ -137,5 +168,16 @@ impl SandboxProcess for ProcessWithWarnings {
 
     fn stderr_closer(&self) -> Option<Box<dyn StreamCloser>> {
         self.inner.stderr_closer()
+    }
+}
+
+#[cfg(test)]
+mod stdio_tests {
+    use super::{SandboxStdio, StdioMode};
+
+    #[test]
+    fn public_stdio_modes_map_to_backend_modes() {
+        assert_eq!(SandboxStdio::Piped.backend_mode(), StdioMode::Pipes);
+        assert_eq!(SandboxStdio::Inherit.backend_mode(), StdioMode::Inherit);
     }
 }
