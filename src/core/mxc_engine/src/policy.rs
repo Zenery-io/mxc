@@ -749,6 +749,16 @@ impl SandboxRequest {
         self
     }
 
+    /// Allow or reject the Windows host-DACL filesystem fallback.
+    ///
+    /// Set this to `false` to fail when ProcessContainer cannot enforce the
+    /// requested filesystem policy without modifying host security descriptors.
+    /// Other containment backends ignore this setting.
+    pub fn set_allow_dacl_mutation(&mut self, allow: bool) -> &mut Self {
+        self.inner.policy.fallback.allow_dacl_mutation = allow;
+        self
+    }
+
     /// The Seatbelt (macOS) extra Mach service names the sandbox profile lets the
     /// child look up. Empty when the request carries no Seatbelt config (i.e. a
     /// non-Seatbelt backend). Read these — e.g. to union with your own — before
@@ -1326,6 +1336,23 @@ mod tests {
         let mut request = build_request(&policy, None).expect("build_request should succeed");
         request.set_env([("FIRST", "1"), ("SECOND", "2")]);
         assert_eq!(request.inner.env, vec!["FIRST=1", "SECOND=2"]);
+    }
+
+    #[test]
+    fn request_can_reject_dacl_mutation_fallback() {
+        let policy = SandboxPolicy {
+            version: "0.7.0-alpha".to_string(),
+            filesystem: None,
+            network: None,
+            ui: None,
+            timeout_ms: None,
+            capture_denials: None,
+        };
+        let mut request = build_request(&policy, None).expect("build_request should succeed");
+
+        assert!(request.inner.policy.fallback.allow_dacl_mutation);
+        request.set_allow_dacl_mutation(false);
+        assert!(!request.inner.policy.fallback.allow_dacl_mutation);
     }
 
     #[test]
